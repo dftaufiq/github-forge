@@ -230,34 +230,34 @@ export interface Ctx {
   segments: string[];
 }
 
-/** The headers every response carries. */
-function baseHeaders(extra?: Record<string, string>): Record<string, string> {
+/** Build the response headers in a single object (same keys, same order as before). */
+function responseHeaders(
+  contentType: string | null,
+  length: number | null,
+  extra?: Record<string, string>,
+): Record<string, string> {
   const headers: Record<string, string> = {
     'X-GitHub-Request-Id': nextRequestId(),
     Connection: 'keep-alive',
   };
-  if (extra !== undefined) Object.assign(headers, extra);
+  if (contentType !== null) headers['Content-Type'] = contentType;
+  if (length !== null) headers['Content-Length'] = String(length);
+  if (extra !== undefined) {
+    for (const key of Object.keys(extra)) headers[key] = extra[key];
+  }
   return headers;
 }
 
 /** Send a JSON value with the given status. */
 export function sendJson(ctx: Ctx, status: number, value: unknown, extra?: Record<string, string>): void {
   const body = Buffer.from(JSON.stringify(value), 'utf8');
-  ctx.res.writeHead(status, baseHeaders({
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': String(body.length),
-    ...extra,
-  }));
+  ctx.res.writeHead(status, responseHeaders('application/json; charset=utf-8', body.length, extra));
   ctx.res.end(body);
 }
 
 /** Send a pre-serialized JSON buffer with the given status (the read-bench hot path). */
 export function sendJsonBuffer(ctx: Ctx, status: number, body: Buffer, extra?: Record<string, string>): void {
-  ctx.res.writeHead(status, baseHeaders({
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': String(body.length),
-    ...extra,
-  }));
+  ctx.res.writeHead(status, responseHeaders('application/json; charset=utf-8', body.length, extra));
   ctx.res.end(body);
 }
 
@@ -268,7 +268,7 @@ export function sendError(ctx: Ctx, status: number, message: string): void {
 
 /** Send an empty body (204 and friends). */
 export function sendEmpty(ctx: Ctx, status: number, extra?: Record<string, string>): void {
-  ctx.res.writeHead(status, baseHeaders({ ...extra }));
+  ctx.res.writeHead(status, responseHeaders(null, null, extra));
   ctx.res.end();
 }
 
@@ -280,10 +280,6 @@ export function sendBytes(
   body: Buffer,
   extra?: Record<string, string>,
 ): void {
-  ctx.res.writeHead(status, baseHeaders({
-    'Content-Type': contentType,
-    'Content-Length': String(body.length),
-    ...extra,
-  }));
+  ctx.res.writeHead(status, responseHeaders(contentType, body.length, extra));
   ctx.res.end(body);
 }

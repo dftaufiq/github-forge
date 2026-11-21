@@ -86,18 +86,20 @@ function advertiseV0(service: string, caps: string, repo: Repo): Buffer {
   return Buffer.concat(parts);
 }
 
+/** The v2 advertisement is identical for every repo and every request: build it once. */
+const ADVERTISE_V2: Buffer = Buffer.concat([
+  pktLine('# service=git-upload-pack\n'),
+  PKT_FLUSH,
+  pktLine('version 2\n'),
+  pktLine('fetch=shallow\n'),
+  pktLine('ls-refs\n'),
+  PKT_FLUSH,
+]);
+
 /** A protocol v2 advertisement: service preamble, flush, version line, capabilities, flush. */
 function advertiseV2(repo: Repo): Buffer {
   void repo;
-  const parts: Buffer[] = [
-    pktLine('# service=git-upload-pack\n'),
-    PKT_FLUSH,
-    pktLine('version 2\n'),
-    pktLine('fetch=shallow\n'),
-    pktLine('ls-refs\n'),
-    PKT_FLUSH,
-  ];
-  return Buffer.concat(parts);
+  return ADVERTISE_V2;
 }
 
 /** Handle GET /{owner}/{repo}.git/info/refs. */
@@ -183,8 +185,15 @@ function sidebandPack(pack: Buffer): Buffer[] {
   const chunkSize = 65515;
   for (let offset = 0; offset < pack.length; offset += chunkSize) {
     const chunk = pack.subarray(offset, Math.min(offset + chunkSize, pack.length));
-    const payload = Buffer.concat([Buffer.from([1]), chunk]);
-    parts.push(pktLine(payload));
+    // One allocation for the whole pkt-line: 4-byte hex length, the band
+    // byte, then the chunk. Byte-identical to pktLine(concat([1, chunk])),
+    // without the intermediate buffers.
+    const length = chunk.length + 5;
+    const out = Buffer.allocUnsafe(length);
+    out.write(length.toString(16).padStart(4, '0'), 0, 'ascii');
+    out[4] = 1;
+    chunk.copy(out, 5);
+    parts.push(out);
   }
   return parts;
 }

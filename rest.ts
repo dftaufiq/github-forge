@@ -862,8 +862,18 @@ function handleMergePull(forge: Forge, repo: Repo, ctx: Ctx, number: number): vo
 // -------------------------------------------------------------------------------------------
 
 /** Parse a positive integer path segment, or null. */
+/** True when the string is one or more ASCII digits (same as /^\d+$/). */
+function isDigits(segment: string): boolean {
+  if (segment.length === 0) return false;
+  for (let i = 0; i < segment.length; i += 1) {
+    const code = segment.charCodeAt(i);
+    if (code < 48 || code > 57) return false;
+  }
+  return true;
+}
+
 function pathNumber(segment: string): number | null {
-  if (!/^\d+$/.test(segment)) return null;
+  if (!isDigits(segment)) return null;
   return Number(segment);
 }
 

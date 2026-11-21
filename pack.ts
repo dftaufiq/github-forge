@@ -22,8 +22,17 @@ export const PKT_RESPONSE_END = Buffer.from('0002', 'ascii');
 /** One pkt-line framing `payload` (a string or raw bytes). */
 export function pktLine(payload: string | Buffer): Buffer {
   const body = typeof payload === 'string' ? Buffer.from(payload, 'utf8') : payload;
-  const header = Buffer.from((body.length + 4).toString(16).padStart(4, '0'), 'ascii');
-  return Buffer.concat([header, body]);
+  const length = body.length + 4;
+  // Pkt-line lengths fit in 4 hex digits (max frame 65520); fall back to the
+  // general path for anything larger so the output stays well-formed.
+  if (length > 0xffff) {
+    const header = Buffer.from(length.toString(16).padStart(4, '0'), 'ascii');
+    return Buffer.concat([header, body]);
+  }
+  const out = Buffer.allocUnsafe(length);
+  out.write(length.toString(16).padStart(4, '0'), 0, 'ascii');
+  body.copy(out, 4);
+  return out;
 }
 
 /** True when the four bytes at `offset` are a pkt-line length of 0000 (flush). */
@@ -304,6 +313,27 @@ export function parsePack(buffer: Buffer, repo: Repo): UnpackedObject[] {
     };
     entries.push(entry);
     byOffset.set(start, entry);
+  }
+
+  // Fast path: a pack with no deltas (the common case for small pushes)
+  // needs no resolution machinery — each entry is a whole object. This
+  // produces exactly what resolve() would for such a pack: the same size
+  // check, the same hash, the same order.
+  let hasDeltas = false;
+  for (const entry of entries) {
+    if (entry.typeNumber === 6 || entry.typeNumber === 7) {
+      hasDeltas = true;
+      break;
+    }
+  }
+  if (!hasDeltas) {
+    const objects: UnpackedObject[] = [];
+    for (const entry of entries) {
+      if (entry.payload.length !== entry.size) throw new Error('object size does not match its header');
+      const type = PACK_TYPE_NAME[entry.typeNumber] as ObjectType;
+      objects.push({ oid: hashObject(type, entry.payload), type, data: entry.payload });
+    }
+    return objects;
   }
 
   // Resolve entries, memoizing by entry. REF_DELTA bases are found by

@@ -19,6 +19,9 @@ import { handleMcp } from './mcp.ts';
 /** The largest request body accepted (packs are the big ones; the suite's are small). */
 const MAX_BODY_BYTES = 64 * 1024 * 1024;
 
+/** Shared empty body for requests that carry no body at all. */
+const EMPTY_BODY = Buffer.alloc(0);
+
 /** Read the request body fully, or reject when it exceeds the cap. */
 function readBody(req: IncomingMessage): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -52,6 +55,12 @@ function pathSegments(pathname: string): string[] {
   const segments: string[] = [];
   for (const raw of pathname.split('/')) {
     if (raw === '') continue;
+    // Most segments carry no escape: decodeURIComponent would return them
+    // unchanged, so skip the call (and its allocation) outright.
+    if (raw.indexOf('%') < 0) {
+      segments.push(raw);
+      continue;
+    }
     try {
       segments.push(decodeURIComponent(raw));
     } catch {
@@ -94,12 +103,20 @@ async function handleRequest(forge: Forge, req: IncomingMessage, res: ServerResp
     sendBareError(res, 400, 'Bad request URL');
     return;
   }
+  // A request with neither a content-length nor a transfer-encoding header
+  // carries no body by construction (HTTP/1.1 cannot frame one without
+  // them): skip the read entirely instead of waiting a turn for 'end'.
+  // Anything that might carry a body still goes through readBody.
   let body: Buffer;
-  try {
-    body = await readBody(req);
-  } catch {
-    sendBareError(res, 413, 'Request body too large');
-    return;
+  if (req.headers['content-length'] === undefined && req.headers['transfer-encoding'] === undefined) {
+    body = EMPTY_BODY;
+  } else {
+    try {
+      body = await readBody(req);
+    } catch {
+      sendBareError(res, 413, 'Request body too large');
+      return;
+    }
   }
   const ctx: Ctx = { req, res, method: req.method ?? 'GET', url, body, segments: pathSegments(url.pathname) };
   try {
